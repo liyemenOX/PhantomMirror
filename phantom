@@ -131,7 +131,11 @@ def launch_mirror(profile="balanced", wireless=False, screen_off=False, audio=Tr
     print(f"[+] Connection     : {'WIRELESS (Hotspot/Wi-Fi)' if ':' in serial else 'USB HIGH-SPEED'}")
     print(f"[+] Detected Host  : {gpu.upper()} Graphics Architecture")
     print(f"[+] Active Profile : {profile.upper()}")
-    print("==================================================")
+    # Wake up device if currently asleep/dozing
+    try:
+        subprocess.run(["adb", "-s", serial, "shell", "input keyevent KEYCODE_WAKEUP"], timeout=1, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception:
+        pass
 
     # Base high-performance arguments
     args = [
