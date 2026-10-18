@@ -91,25 +91,41 @@ PhantomMirror/
 
 ---
 
+```
+
+---
+
 ## 🚀 Quickstart & Usage
 
-### 1. One-Click Deploy to Android (via ADB)
-```bash
-./deploy.sh
-```
-*This automatically compiles `phantom-server.jar` if needed, pushes it to your phone, and boots the daemon.*
+### ⚡ The Unified `phantom` CLI Launcher
+PhantomMirror includes an intelligent launcher that auto-detects your GPU hardware (NVIDIA, Intel, AMD) and optimizes the video pipeline:
 
-### 2. Manual Android Server Build
 ```bash
+# 1. Pro Mode: Apple-tier 120 FPS, H.265 (HEVC), 24 Mbps (Default for RTX 3050 / dGPUs)
+./phantom --profile pro
+
+# 2. Balanced Mode: 60 FPS, H.265, 12 Mbps (Optimized for Intel Iris Xe / AMD Radeon iGPUs)
+./phantom --profile balanced
+
+# 3. Battery Saver Mode: 60 FPS, H.264, 6 Mbps, 720p (For older laptops / ultra-low power)
+./phantom --profile battery
+
+# 4. Wireless / Mobile Hotspot Mode (Connects over Wi-Fi, then you can unplug USB)
+./phantom --profile pro --wireless
+
+# 5. Screen-Off Mode (Keeps phone physical display dark while mirroring)
+./phantom --profile pro --screen-off
+```
+
+---
+
+### 🛠️ Manual Server Daemon Build & Deployment (Zero-Dependency)
+```bash
+# Compile and dex the server daemon (Google D8)
 ./phantom-server/build.sh
-```
 
-### 3. Launch Desktop Client (Linux / Windows)
-```bash
-cd phantom-desktop
-npm install
-npm run dev        # Web/Dev preview mode
-npm run tauri dev  # Native windowed desktop mode
+# Deploy directly to connected Android device via ADB
+./deploy.sh
 ```
 
 ---
