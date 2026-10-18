@@ -11,6 +11,36 @@ import os
 import argparse
 import time
 
+def get_default_gateway():
+    """Find the Wi-Fi / Hotspot gateway IP address automatically."""
+    try:
+        out = subprocess.check_output(["ip", "route"], text=True)
+        for line in out.splitlines():
+            if line.startswith("default via"):
+                parts = line.split()
+                if len(parts) >= 3:
+                    return parts[2]
+    except Exception:
+        pass
+    # Common Android Hotspot fallback
+    return "192.168.43.1"
+
+def auto_connect_wireless():
+    """Attempts to connect to wireless device via Hotspot/Wi-Fi gateway."""
+    gateway = get_default_gateway()
+    if not gateway:
+        return False
+
+    print(f"[*] Probing Wi-Fi / Hotspot gateway at {gateway}:5555...")
+    try:
+        out = subprocess.check_output(["adb", "connect", f"{gateway}:5555"], text=True, timeout=3)
+        if "connected to" in out.lower() or "already connected" in out.lower():
+            print(f"[+] Successfully connected to phone over Wi-Fi ({gateway}:5555)")
+            return True
+    except Exception:
+        pass
+    return False
+
 def get_connected_devices():
     try:
         out = subprocess.check_output(["adb", "devices", "-l"], text=True)
@@ -55,23 +85,50 @@ def get_phone_ip(serial=None):
             return ip
     except Exception:
         pass
-    return None
+    return get_default_gateway()
 
 def launch_mirror(profile="balanced", wireless=False, screen_off=False, audio=True):
     devices = get_connected_devices()
 
+    # If no devices found, try auto-connecting to the Hotspot gateway!
+    if not devices:
+        print("[!] No USB device detected. Scanning for Wi-Fi / Mobile Hotspot phone...")
+        if auto_connect_wireless():
+            devices = get_connected_devices()
+
     if not devices:
         print("[-] No connected Android devices found.")
-        print("[!] Please connect your phone via USB or connect to its Hotspot.")
+        print("[!] Please connect your phone via USB or connect to its Mobile Hotspot.")
         sys.exit(1)
 
-    serial, model = devices[0]
+    # If wireless requested or only wireless device present, select wireless
+    target_device = devices[0]
+    if wireless:
+        # Check if an IP address device is already connected
+        wireless_devs = [d for d in devices if ":" in d[0]]
+        if wireless_devs:
+            target_device = wireless_devs[0]
+        else:
+            # Enable TCP/IP on USB device first, then connect
+            usb_serial = devices[0][0]
+            print(f"[*] Enabling TCP/IP mode on {usb_serial}...")
+            subprocess.call(["adb", "-s", usb_serial, "tcpip", "5555"])
+            time.sleep(1)
+            phone_ip = get_phone_ip(usb_serial) or get_default_gateway()
+            print(f"[+] Connecting wirelessly to {phone_ip}:5555...")
+            subprocess.call(["adb", "connect", f"{phone_ip}:5555"])
+            time.sleep(1)
+            target_device = (f"{phone_ip}:5555", devices[0][1])
+            print("[✓] Wireless link established! You can now unplug the USB cable.")
+
+    serial, model = target_device
     gpu = detect_hardware()
 
     print("==================================================")
     print("⚡ PhantomMirror - Ultra Low-Latency Suite")
     print("==================================================")
     print(f"[+] Target Device  : {model} ({serial})")
+    print(f"[+] Connection     : {'WIRELESS (Hotspot/Wi-Fi)' if ':' in serial else 'USB HIGH-SPEED'}")
     print(f"[+] Detected Host  : {gpu.upper()} Graphics Architecture")
     print(f"[+] Active Profile : {profile.upper()}")
     print("==================================================")
@@ -122,19 +179,6 @@ def launch_mirror(profile="balanced", wireless=False, screen_off=False, audio=Tr
     if screen_off:
         args.append("--turn-screen-off")
         print("[+] Screen-Off Mode: Enabled (Physical display remains off)")
-
-    # Wireless / Hotspot Transition
-    if wireless:
-        print("[*] Switching to Wireless Mode...")
-        subprocess.call(["adb", "-s", serial, "tcpip", "5555"])
-        time.sleep(1)
-        phone_ip = get_phone_ip(serial)
-        if phone_ip:
-            print(f"[+] Phone IP detected: {phone_ip}")
-            print(f"[+] Connecting via Wi-Fi/Hotspot: {phone_ip}:5555...")
-            subprocess.call(["adb", "connect", f"{phone_ip}:5555"])
-            print("[✓] You can now unplug your USB cable!")
-            args[args.index(serial)] = f"{phone_ip}:5555"
 
     env = os.environ.copy()
     if "DISPLAY" not in env:
