@@ -1,0 +1,29 @@
+plugins {
+    id 'java'
+}
+
+group = 'com.phantom.mirror'
+version = '1.0.0'
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_17
+    targetCompatibility = JavaVersion.VERSION_17
+}
+
+repositories {
+    mavenCentral()
+    google()
+}
+
+dependencies {
+    // Android mock stubs for compilation against platform hidden APIs
+    compileOnly files('/opt/android-sdk/platforms/android-34/android.jar')
+    testImplementation 'junit:junit:4.13.2'
+}
+
+jar {
+    archiveBaseName = 'phantom-server'
+    manifest {
+        attributes 'Main-Class': 'com.phantom.mirror.PhantomServer'
+    }
+}

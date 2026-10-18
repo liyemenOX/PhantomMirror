@@ -1,0 +1,38 @@
+# Build output
+target/
+build/
+dist/
+out/
+*.class
+*.jar
+*.apk
+*.aab
+
+# Node & Frontend
+node_modules/
+.pnpm-store/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Rust & Cargo
+**/*.rs.bk
+Cargo.lock
+
+# Android / Gradle
+.gradle/
+local.properties
+.idea/
+*.iml
+.cxx/
+
+# OS Specific
+.DS_Store
+Thumbs.db
+*.swp
+*~
+*.bak
+
+# Environment
+.env
+.env.local
