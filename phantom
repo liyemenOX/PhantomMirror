@@ -317,8 +317,16 @@ def main():
         action="store_true",
         help="Disable audio streaming",
     )
+    parser.add_argument(
+        "--audio",
+        action="store_true",
+        default=False,
+        help="Force enable audio streaming (for Virtual Session mode)",
+    )
 
     args = parser.parse_args()
+    audio_enabled = args.audio if args.virtual_display else (not args.no_audio)
+
     launch_mirror(
         profile=args.profile,
         wireless=args.wireless,
@@ -326,7 +334,7 @@ def main():
         screen_off=not args.keep_screen_on,
         virtual_display=args.virtual_display,
         app=args.app,
-        audio=not args.no_audio,
+        audio=audio_enabled,
     )
 
 if __name__ == "__main__":
