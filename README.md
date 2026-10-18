@@ -104,17 +104,20 @@ PhantomMirror includes an intelligent launcher that auto-detects your GPU hardwa
 # 1. Pro Mode: Apple-tier 120 FPS, H.265 (HEVC), 24 Mbps (Default for RTX 3050 / dGPUs)
 ./phantom --profile pro
 
-# 2. Balanced Mode: 60 FPS, H.265, 12 Mbps (Optimized for Intel Iris Xe / AMD Radeon iGPUs)
+# 2. Virtual Session Mode (Apple iPhone Mirroring style: stays alive even if physical phone is closed/locked)
+./phantom --virtual-session
+
+# 3. Launch specific app directly in Virtual Session (e.g. WhatsApp, Spotify, Settings)
+./phantom --virtual-session --app whatsapp
+
+# 4. Balanced Mode: 60 FPS, H.265, 12 Mbps (Optimized for Intel Iris Xe / AMD Radeon iGPUs)
 ./phantom --profile balanced
 
-# 3. Battery Saver Mode: 60 FPS, H.264, 6 Mbps, 720p (For older laptops / ultra-low power)
+# 5. Battery Saver Mode: 60 FPS, H.264, 6 Mbps, 720p (For older laptops / ultra-low power)
 ./phantom --profile battery
 
-# 4. Wireless / Mobile Hotspot Mode (Connects over Wi-Fi, then you can unplug USB)
+# 6. Wireless / Mobile Hotspot Mode (Connects over Wi-Fi, then you can unplug USB)
 ./phantom --profile pro --wireless
-
-# 5. Screen-Off Mode (Keeps phone physical display dark while mirroring)
-./phantom --profile pro --screen-off
 ```
 
 ---

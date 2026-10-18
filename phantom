@@ -105,7 +105,7 @@ def get_phone_ip(serial=None):
         pass
     return get_default_gateway()
 
-def launch_mirror(profile="pro", wireless=False, custom_ip=None, screen_off=False, audio=True):
+def launch_mirror(profile="pro", wireless=False, custom_ip=None, screen_off=False, virtual_display=False, app=None, audio=True):
     # 1. If user supplied an explicit IP, connect to it directly
     if custom_ip:
         try_connect_ip(custom_ip)
@@ -190,6 +190,7 @@ def launch_mirror(profile="pro", wireless=False, custom_ip=None, screen_off=Fals
 
     # Wake up device if currently asleep/dozing and dismiss keyguard
     try:
+        subprocess.run(["adb", "-s", serial, "shell", "svc power stayon true"], timeout=1, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         subprocess.run(["adb", "-s", serial, "shell", "input keyevent KEYCODE_WAKEUP"], timeout=1, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         subprocess.run(["adb", "-s", serial, "shell", "wm dismiss-keyguard"], timeout=1, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except Exception:
@@ -202,10 +203,22 @@ def launch_mirror(profile="pro", wireless=False, custom_ip=None, screen_off=Fals
         "--stay-awake",
     ]
 
-    # Virtual Display mode (Android 14+ independent secondary display)
+    # Virtual Session mode (Apple iPhone Mirroring-style independent secondary display on Android 14+)
     if virtual_display:
-        args.append("--new-display=1080x2354/420")
-        print("[+] Virtual Display Mode: ACTIVE (Independent screen that never sleeps)")
+        args.extend([
+            "--new-display=1080x2354/420",
+            "-x",
+            "--no-vd-destroy-content",
+        ])
+        if app:
+            target_app = app if app.startswith(('?', '+')) else f"?{app}"
+            args.append(f"--start-app={target_app}")
+            print(f"[+] Virtual Session: Launching app '{app}' on independent display")
+        else:
+            args.append("--start-app=com.android.settings")
+            print("[+] Virtual Session: Launching System Hub on independent display")
+        print("[+] Virtual Session Mode: ACTIVE (Independent screen that stays active when phone is locked/closed)")
+        print("[*] Window is dynamically resizable (-x flex display enabled)")
 
     # Hardware & Performance Profiles
     if profile == "pro":
@@ -248,9 +261,9 @@ def launch_mirror(profile="pro", wireless=False, custom_ip=None, screen_off=Fals
     # Screen off mode: Enabled by default to keep physical screen dark like Apple Mirroring
     if screen_off and not virtual_display:
         args.append("--turn-screen-off")
-        print("[+] Screen-Off Mode: Physical phone display is powered OFF")
-        print("[!] Pro-Tip: DO NOT press the physical power button on your phone.")
-        print("             (If you accidentally locked it, press Alt+P or Right Click in the window to wake/unlock).")
+        print("[+] Screen-Off Mode: Physical phone display is powered OFF to save battery")
+        print("[!] Pro-Tip: You do NOT need to press your phone's physical power button.")
+        print("             (If phone locks/dozes, Right-Click in the window or press Alt+P to wake it instantly)")
 
     env = os.environ.copy()
     if "DISPLAY" not in env:
@@ -287,9 +300,17 @@ def main():
         help="Keep the physical phone display turned ON (by default it turns off for battery/privacy)",
     )
     parser.add_argument(
-        "--virtual-display",
+        "--virtual-session", "--virtual-display",
+        dest="virtual_display",
         action="store_true",
-        help="Create an independent virtual display (Android 14+) that stays active even if phone is closed/locked",
+        help="Apple iPhone Mirroring style independent virtual session (stays alive even when phone is locked/closed)",
+    )
+    parser.add_argument(
+        "--app", "--start-app",
+        dest="app",
+        type=str,
+        default=None,
+        help="App package or prefix to open in Virtual Session (e.g., --app whatsapp, --app spotify, --app settings)",
     )
     parser.add_argument(
         "--no-audio",
@@ -304,6 +325,7 @@ def main():
         custom_ip=args.ip,
         screen_off=not args.keep_screen_on,
         virtual_display=args.virtual_display,
+        app=args.app,
         audio=not args.no_audio,
     )
 
