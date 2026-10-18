@@ -5,8 +5,6 @@ import com.phantom.mirror.input.InputInjector;
 import com.phantom.mirror.net.UdpStreamer;
 import com.phantom.mirror.discovery.MdnsAdvertiser;
 
-import java.io.IOException;
-
 /**
  * Main entrypoint for PhantomMirror Android server daemon.
  * Executed via app_process:
@@ -19,7 +17,7 @@ public class PhantomServer {
 
     public static void main(String[] args) {
         System.out.println("==================================================");
-        System.out.println("[*] PhantomMirror Daemon v1.0.0 initializing...");
+        System.out.println("⚡ PhantomMirror Daemon v1.0.0 initializing...");
         System.out.println("[*] Mode: High-Performance Low-Latency UDP/H.265");
         System.out.println("==================================================");
 
@@ -47,6 +45,7 @@ public class PhantomServer {
 
             // 4. Initialize Hardware Video Encoder (MediaCodec H.265)
             ScreenEncoder screenEncoder = new ScreenEncoder(streamer);
+            streamer.setScreenEncoder(screenEncoder);
             screenEncoder.start();
             System.out.println("[+] MediaCodec H.265 Hardware Encoder running (KEY_LATENCY=0)");
 
@@ -62,6 +61,7 @@ public class PhantomServer {
                     }
                 }
             }, "Phantom-Input-Worker");
+            inputThread.setPriority(Thread.MAX_PRIORITY);
             inputThread.start();
 
             // Register shutdown hook

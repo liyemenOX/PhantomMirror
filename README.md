@@ -78,7 +78,12 @@ PhantomMirror/
 │   │   ├── src/            # Hardware decoding & networking
 │   │   └── Cargo.toml
 │   └── src/                # Apple-style Glassmorphic Frontend
+│       ├── components/     # Interactive StreamCanvas & Controls HUD
 │       └── App.tsx
+│
+├── tools/                  # Diagnostics & Development Suite
+│   ├── mock_phone_streamer.py # Simulated phone daemon for local client testing
+│   └── packet_inspector.py    # Live UDP protocol packet sniffer
 │
 └── protocol/               # Binary protocol specification
     └── SPECIFICATION.md    # Frame headers, input packets, PLI requests
@@ -86,26 +91,42 @@ PhantomMirror/
 
 ---
 
-## 🚀 Quickstart
+## 🚀 Quickstart & Usage
 
-### 1. Build the Android Server
+### 1. One-Click Deploy to Android (via ADB)
 ```bash
-cd phantom-server
-./gradlew build
+./deploy.sh
+```
+*This automatically compiles `phantom-server.jar` if needed, pushes it to your phone, and boots the daemon.*
+
+### 2. Manual Android Server Build
+```bash
+./phantom-server/build.sh
 ```
 
-### 2. Push & Launch Server Daemon on Android
-```bash
-adb push build/libs/phantom-server.jar /data/local/tmp/
-adb shell CLASSPATH=/data/local/tmp/phantom-server.jar app_process / com.phantom.mirror.PhantomServer
-```
-
-### 3. Launch the Desktop Client (Linux / Windows)
+### 3. Launch Desktop Client (Linux / Windows)
 ```bash
 cd phantom-desktop
 npm install
-npm run tauri dev
+npm run dev        # Web/Dev preview mode
+npm run tauri dev  # Native windowed desktop mode
 ```
+
+---
+
+## 🧪 Local Testing Without a Physical Phone
+
+You can test the entire desktop streaming pipeline and interactive mouse/touch controls right on your machine:
+
+1. **Start the Mock Android Daemon**:
+   ```bash
+   python3 tools/mock_phone_streamer.py
+   ```
+2. **Start the Desktop Client**:
+   ```bash
+   cd phantom-desktop && npm run dev
+   ```
+3. Open `http://localhost:1420` in your browser. Click on the discovered device to immediately test 60 FPS streaming, mouse gestures, and real-time sub-15ms latency telemetry!
 
 ---
 
