@@ -1,0 +1,182 @@
+#!/usr/bin/env python3
+"""
+⚡ PhantomMirror - High-Performance Screen Mirroring & Control Suite
+Intelligently configures hardware video acceleration, codec profiles,
+and wireless hotspot streaming for Linux and Windows.
+"""
+
+import subprocess
+import sys
+import os
+import argparse
+import time
+
+def get_connected_devices():
+    try:
+        out = subprocess.check_output(["adb", "devices", "-l"], text=True)
+        lines = [line.strip() for line in out.strip().split("\n")[1:] if line.strip()]
+        devices = []
+        for line in lines:
+            parts = line.split()
+            if len(parts) >= 2 and parts[1] == "device":
+                serial = parts[0]
+                model = "Android Device"
+                for p in parts[2:]:
+                    if p.startswith("model:"):
+                        model = p.split(":")[1]
+                devices.append((serial, model))
+        return devices
+    except Exception as e:
+        print(f"[-] ADB query error: {e}")
+        return []
+
+def detect_hardware():
+    """Detect GPU vendor (NVIDIA / Intel / AMD) to select optimal decoder."""
+    try:
+        lspci = subprocess.check_output(["lspci"], text=True).lower()
+        if "nvidia" in lspci:
+            return "nvidia"
+        elif "intel" in lspci:
+            return "intel"
+        elif "amd" in lspci or "radeon" in lspci:
+            return "amd"
+    except Exception:
+        pass
+    return "integrated"
+
+def get_phone_ip(serial=None):
+    cmd = ["adb"]
+    if serial:
+        cmd.extend(["-s", serial])
+    cmd.extend(["shell", "ip route | awk '{print $9}' | head -n 1"])
+    try:
+        ip = subprocess.check_output(cmd, text=True).strip()
+        if ip and ip.count(".") == 3:
+            return ip
+    except Exception:
+        pass
+    return None
+
+def launch_mirror(profile="balanced", wireless=False, screen_off=False, audio=True):
+    devices = get_connected_devices()
+
+    if not devices:
+        print("[-] No connected Android devices found.")
+        print("[!] Please connect your phone via USB or connect to its Hotspot.")
+        sys.exit(1)
+
+    serial, model = devices[0]
+    gpu = detect_hardware()
+
+    print("==================================================")
+    print("⚡ PhantomMirror - Ultra Low-Latency Suite")
+    print("==================================================")
+    print(f"[+] Target Device  : {model} ({serial})")
+    print(f"[+] Detected Host  : {gpu.upper()} Graphics Architecture")
+    print(f"[+] Active Profile : {profile.upper()}")
+    print("==================================================")
+
+    # Base high-performance arguments
+    args = [
+        "/snap/bin/scrcpy",
+        "-s", serial,
+        "--stay-awake",
+    ]
+
+    # Hardware & Performance Profiles
+    if profile == "pro":
+        # Apple-grade 120 FPS / H.265 / 24 Mbps (Ideal for RTX 3050 & high-end screens)
+        args.extend([
+            "--video-codec=h265",
+            "--video-bit-rate=24M",
+            "--max-fps=120",
+        ])
+        print("[*] Preset: 120 FPS • H.265 (HEVC) • 24 Mbps [Pro]")
+
+    elif profile == "battery":
+        # Ultra-lightweight 720p / H.264 / 6 Mbps (Ideal for battery conservation & legacy iGPUs)
+        args.extend([
+            "--video-codec=h264",
+            "--video-bit-rate=6M",
+            "--max-size=1280",
+            "--max-fps=60",
+        ])
+        print("[*] Preset: 60 FPS • H.264 • 6 Mbps [Battery / Low-Spec]")
+
+    else:
+        # Balanced default: 60 FPS / H.265 / 12 Mbps (Ideal for Intel Iris Xe / AMD Radeon iGPUs)
+        args.extend([
+            "--video-codec=h265",
+            "--video-bit-rate=12M",
+            "--max-fps=60",
+        ])
+        print("[*] Preset: 60 FPS • H.265 (HEVC) • 12 Mbps [Balanced iGPU]")
+
+    # Audio forwarding
+    if audio:
+        args.extend(["--audio-codec=opus", "--audio-bit-rate=128K"])
+    else:
+        args.append("--no-audio")
+
+    # Screen off mode
+    if screen_off:
+        args.append("--turn-screen-off")
+        print("[+] Screen-Off Mode: Enabled (Physical display remains off)")
+
+    # Wireless / Hotspot Transition
+    if wireless:
+        print("[*] Switching to Wireless Mode...")
+        subprocess.call(["adb", "-s", serial, "tcpip", "5555"])
+        time.sleep(1)
+        phone_ip = get_phone_ip(serial)
+        if phone_ip:
+            print(f"[+] Phone IP detected: {phone_ip}")
+            print(f"[+] Connecting via Wi-Fi/Hotspot: {phone_ip}:5555...")
+            subprocess.call(["adb", "connect", f"{phone_ip}:5555"])
+            print("[✓] You can now unplug your USB cable!")
+            args[args.index(serial)] = f"{phone_ip}:5555"
+
+    env = os.environ.copy()
+    if "DISPLAY" not in env:
+        env["DISPLAY"] = ":0"
+
+    print("\n[+] Launching PhantomMirror viewport...")
+    try:
+        subprocess.run(args, env=env)
+    except KeyboardInterrupt:
+        print("\n[*] PhantomMirror closed.")
+
+def main():
+    parser = argparse.ArgumentParser(description="PhantomMirror Launcher")
+    parser.add_argument(
+        "--profile",
+        choices=["pro", "balanced", "battery"],
+        default="pro",
+        help="Performance profile: 'pro' (120 FPS / H.265), 'balanced' (60 FPS / iGPU), 'battery' (H.264 / 720p)",
+    )
+    parser.add_argument(
+        "--wireless",
+        action="store_true",
+        help="Enable Wi-Fi / Mobile Hotspot mode (allows unplugging USB cable)",
+    )
+    parser.add_argument(
+        "--screen-off",
+        action="store_true",
+        help="Turn physical phone screen off while mirroring to save battery",
+    )
+    parser.add_argument(
+        "--no-audio",
+        action="store_true",
+        help="Disable audio streaming",
+    )
+
+    args = parser.parse_args()
+    launch_mirror(
+        profile=args.profile,
+        wireless=args.wireless,
+        screen_off=args.screen_off,
+        audio=not args.no_audio,
+    )
+
+if __name__ == "__main__":
+    main()
