@@ -173,19 +173,11 @@ def launch_mirror(profile="balanced", wireless=False, screen_off=False, audio=Tr
         ])
         print("[*] Preset: 60 FPS • H.265 (HEVC) • 12 Mbps [Balanced iGPU]")
 
-    # Zero-latency buffer tuning & kernel-level HID injection
-    args.extend([
-        "--video-buffer=0",        # Eliminate video frame delay buffer (render instantly)
-        "--mouse=uhid",            # Kernel-level Linux UHID mouse injection (<0.5ms lag)
-        "--keyboard=uhid",         # Kernel-level Linux UHID keyboard injection (<0.5ms lag)
-    ])
-
-    # Audio forwarding & low-latency audio buffer
+    # Audio forwarding
     if audio:
         args.extend([
             "--audio-codec=opus",
             "--audio-bit-rate=128K",
-            "--audio-buffer=20",   # Cut audio buffer from 50ms down to 20ms
         ])
     else:
         args.append("--no-audio")
