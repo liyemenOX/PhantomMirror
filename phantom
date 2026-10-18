@@ -188,9 +188,10 @@ def launch_mirror(profile="pro", wireless=False, custom_ip=None, screen_off=Fals
     print(f"[+] Detected Host  : {gpu.upper()} Graphics Architecture")
     print(f"[+] Active Profile : {profile.upper()}")
 
-    # Wake up device if currently asleep/dozing
+    # Wake up device if currently asleep/dozing and dismiss keyguard
     try:
         subprocess.run(["adb", "-s", serial, "shell", "input keyevent KEYCODE_WAKEUP"], timeout=1, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run(["adb", "-s", serial, "shell", "wm dismiss-keyguard"], timeout=1, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except Exception:
         pass
 
@@ -200,6 +201,11 @@ def launch_mirror(profile="pro", wireless=False, custom_ip=None, screen_off=Fals
         "-s", serial,
         "--stay-awake",
     ]
+
+    # Virtual Display mode (Android 14+ independent secondary display)
+    if virtual_display:
+        args.append("--new-display=1080x2354/420")
+        print("[+] Virtual Display Mode: ACTIVE (Independent screen that never sleeps)")
 
     # Hardware & Performance Profiles
     if profile == "pro":
@@ -239,10 +245,12 @@ def launch_mirror(profile="pro", wireless=False, custom_ip=None, screen_off=Fals
     else:
         args.append("--no-audio")
 
-    # Screen off mode
-    if screen_off:
+    # Screen off mode: Enabled by default to keep physical screen dark like Apple Mirroring
+    if screen_off and not virtual_display:
         args.append("--turn-screen-off")
-        print("[+] Screen-Off Mode: Enabled (Physical display remains off)")
+        print("[+] Screen-Off Mode: Physical phone display is powered OFF")
+        print("[!] Pro-Tip: DO NOT press the physical power button on your phone.")
+        print("             (If you accidentally locked it, press Alt+P or Right Click in the window to wake/unlock).")
 
     env = os.environ.copy()
     if "DISPLAY" not in env:
@@ -274,9 +282,14 @@ def main():
         help="Manually specify phone IP address (e.g., --ip 192.168.43.1 or --ip 10.110.202.49)",
     )
     parser.add_argument(
-        "--screen-off",
+        "--keep-screen-on",
         action="store_true",
-        help="Turn physical phone screen off while mirroring to save battery",
+        help="Keep the physical phone display turned ON (by default it turns off for battery/privacy)",
+    )
+    parser.add_argument(
+        "--virtual-display",
+        action="store_true",
+        help="Create an independent virtual display (Android 14+) that stays active even if phone is closed/locked",
     )
     parser.add_argument(
         "--no-audio",
@@ -289,7 +302,8 @@ def main():
         profile=args.profile,
         wireless=args.wireless,
         custom_ip=args.ip,
-        screen_off=args.screen_off,
+        screen_off=not args.keep_screen_on,
+        virtual_display=args.virtual_display,
         audio=not args.no_audio,
     )
 
