@@ -1,15 +1,15 @@
-import React, { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { Smartphone, Wifi, Zap, Settings, Shield, RefreshCw, Power } from 'lucide-react';
 
 interface Device {
-  name: String;
-  ip: String;
+  name: string;
+  ip: string;
   port: number;
   latency_ms: number;
 }
 
 export default function App() {
-  const [devices, setDevices] = useState<Device[]>([
+  const [devices] = useState<Device[]>([
     { name: 'Android Device (mDNS)', ip: '192.168.1.105', port: 49152, latency_ms: 11 }
   ]);
   const [connected, setConnected] = useState(false);

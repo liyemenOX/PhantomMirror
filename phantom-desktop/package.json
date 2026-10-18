@@ -1,6 +1,7 @@
 {
   "name": "phantom-desktop",
   "version": "1.0.0",
+  "type": "module",
   "description": "Ultra low-latency cross-platform mobile mirroring & control client for Linux & Windows",
   "private": true,
   "scripts": {
