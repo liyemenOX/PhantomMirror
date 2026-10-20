@@ -95,29 +95,66 @@ PhantomMirror/
 
 ---
 
-## 🚀 Quickstart & Usage
+## 📦 Production Installation (1-Step Setup)
 
-### ⚡ The Unified `phantom` CLI Launcher
-PhantomMirror includes an intelligent launcher that auto-detects your GPU hardware (NVIDIA, Intel, AMD) and optimizes the video pipeline:
+Install PhantomMirror globally with full desktop integration, application menu launcher, and system icons:
 
 ```bash
-# 1. Pro Mode: Apple-tier 120 FPS, H.265 (HEVC), 24 Mbps (Default for RTX 3050 / dGPUs)
-./phantom --profile pro
+# Clone the repository
+git clone https://github.com/liyemenOX/PhantomMirror.git
+cd PhantomMirror
 
-# 2. Virtual Session Mode (Apple iPhone Mirroring style: stays alive even if physical phone is closed/locked)
-./phantom --virtual-session
+# Run the production installer (auto-resolves dependencies & sets up desktop launcher)
+./install.sh
+```
 
-# 3. Launch specific app directly in Virtual Session (e.g. WhatsApp, Spotify, Settings)
-./phantom --virtual-session --app whatsapp
+Once installed, **PhantomMirror** is accessible globally:
+* **Desktop App Menu / Dock**: Search for **PhantomMirror** in your application launcher and click to open!
+* **Global CLI**: Run `phantom` anywhere from your terminal.
 
-# 4. Balanced Mode: 60 FPS, H.265, 12 Mbps (Optimized for Intel Iris Xe / AMD Radeon iGPUs)
-./phantom --profile balanced
+To uninstall cleanly at any time:
+```bash
+./uninstall.sh
+```
 
-# 5. Battery Saver Mode: 60 FPS, H.264, 6 Mbps, 720p (For older laptops / ultra-low power)
-./phantom --profile battery
+---
 
-# 6. Wireless / Mobile Hotspot Mode (Connects over Wi-Fi, then you can unplug USB)
-./phantom --profile pro --wireless
+## 🚀 Usage & Commands
+
+### 🩺 System & Hardware Health Check
+Verify your ADB connectivity, GPU hardware decoding (VA-API / NVDEC), and network status:
+```bash
+phantom doctor
+```
+
+### ⚡ Mirroring Commands
+```bash
+# 1. Pro Mode with Apple Device Silhouette (Auto-adapts to your device's exact display shape & cutouts)
+phantom --profile pro
+
+# 2. Wireless / Mobile Hotspot Mode (Connects over Wi-Fi with Zero-Config Discovery)
+phantom --profile pro --wireless
+
+# 3. Virtual Session Mode (Apple iPhone Mirroring style: stays alive even if physical phone is closed/locked)
+phantom --virtual-session
+
+# 4. Launch specific app directly in Virtual Session (e.g. WhatsApp, Spotify, Settings)
+phantom --virtual-session --app whatsapp
+
+# 5. Open Desktop Control Hub (GUI Launcher)
+phantom --gui
+
+# 6. Pure Display Shape (Direct screen curvature matching device corners without outer bezel)
+phantom --profile pro --pure-shape
+
+# 7. Balanced Mode: 60 FPS, H.265, 12 Mbps (Optimized for Intel Iris Xe / AMD Radeon iGPUs)
+phantom --profile balanced
+
+# 8. Battery Saver Mode: 60 FPS, H.264, 6 Mbps, 720p (For older laptops / ultra-low power)
+phantom --profile battery
+
+# 9. Custom Viewport Scale (Specify custom window height in pixels, e.g. 850px)
+phantom --profile pro --scale 850
 ```
 
 ---

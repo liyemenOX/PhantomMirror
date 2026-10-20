@@ -1,0 +1,26 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=PhantomMirror
+GenericName=Ultra Low-Latency Mobile Mirroring & Control
+Comment=Apple-grade fluid mobile mirroring & interactive control over Wi-Fi
+Exec=phantom
+Icon=phantom-mirror
+Terminal=false
+Categories=Utility;AudioVideo;Development;HardwareSettings;
+Keywords=android;mirror;scrcpy;phone;stream;usb;wireless;apple;
+StartupNotify=true
+StartupWMClass=PhantomMirror
+Actions=ProMode;BalancedMode;WirelessMode;
+
+[Desktop Action ProMode]
+Name=Launch in Pro Mode (120 FPS / HEVC)
+Exec=phantom --profile pro
+
+[Desktop Action BalancedMode]
+Name=Launch in Balanced Mode (60 FPS)
+Exec=phantom --profile balanced
+
+[Desktop Action WirelessMode]
+Name=Connect via Wi-Fi (Auto-Discovery)
+Exec=phantom --profile pro --wireless
