@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 """":
-# Wrapper to execute with python3
+# Wrapper to execute with python3 on Linux/macOS
 exec python3 "$0" "$@"
 """
 import subprocess
@@ -11,70 +11,179 @@ import time
 import json
 import socket
 import re
+import shutil
 from concurrent.futures import ThreadPoolExecutor
 
 VERSION = "1.2.0"
 LAST_IP_FILE = os.path.expanduser("~/.phantom_last_ip")
 REGISTRY_FILE = os.path.expanduser("~/.phantom_devices.json")
 
+
+def get_adb_binary():
+    """Locate adb binary across Windows, Linux, and custom installations."""
+    if "ADB_PATH" in os.environ and os.path.isfile(os.environ["ADB_PATH"]):
+        return os.environ["ADB_PATH"]
+    found = shutil.which("adb")
+    if found:
+        return found
+    if sys.platform == "win32":
+        candidates = [
+            os.path.expandvars(r"%LOCALAPPDATA%\Android\Sdk\platform-tools\adb.exe"),
+            os.path.expandvars(r"%USERPROFILE%\scoop\shims\adb.exe"),
+            r"C:\ProgramData\chocolatey\bin\adb.exe",
+            r"C:\scrcpy\adb.exe",
+            os.path.expandvars(r"%ProgramFiles%\Android\platform-tools\adb.exe"),
+        ]
+        for c in candidates:
+            if os.path.isfile(c):
+                return c
+    return "adb"
+
+
+def get_scrcpy_binary():
+    """Locate scrcpy binary across Windows, Linux, and custom installations."""
+    if "SCRCPY_PATH" in os.environ and os.path.isfile(os.environ["SCRCPY_PATH"]):
+        return os.environ["SCRCPY_PATH"]
+    found = shutil.which("scrcpy")
+    if found:
+        return found
+    if sys.platform == "win32":
+        candidates = [
+            r"C:\scrcpy\scrcpy.exe",
+            r"C:\ProgramData\chocolatey\bin\scrcpy.exe",
+            os.path.expandvars(r"%LOCALAPPDATA%\Microsoft\WinGet\Packages\Genymobile.scrcpy_Microsoft.Winget.Source_8wekyb3d8bbwe\scrcpy.exe"),
+            os.path.expandvars(r"%USERPROFILE%\scoop\shims\scrcpy.exe"),
+            os.path.expandvars(r"%ProgramFiles%\scrcpy\scrcpy.exe"),
+        ]
+        winget_pkg = os.path.expandvars(r"%LOCALAPPDATA%\Microsoft\WinGet\Packages")
+        if os.path.isdir(winget_pkg):
+            try:
+                for root, dirs, files in os.walk(winget_pkg):
+                    if "scrcpy.exe" in files:
+                        candidates.append(os.path.join(root, "scrcpy.exe"))
+            except Exception:
+                pass
+        for c in candidates:
+            if os.path.isfile(c):
+                return c
+    elif os.path.exists("/snap/bin/scrcpy"):
+        return "/snap/bin/scrcpy"
+    return "scrcpy"
+
+
+def detect_hardware():
+    """Detect GPU vendor (NVIDIA / Intel / AMD) to select optimal decoder."""
+    if sys.platform == "win32":
+        try:
+            out = subprocess.check_output(
+                ["powershell", "-NoProfile", "-Command", "Get-CimInstance Win32_VideoController | Select-Object -ExpandProperty Name"],
+                text=True, timeout=3, stderr=subprocess.DEVNULL
+            ).lower()
+            if "nvidia" in out or "geforce" in out or "rtx" in out or "gtx" in out:
+                return "nvidia"
+            elif "intel" in out or "iris" in out or "arc" in out:
+                return "intel"
+            elif "amd" in out or "radeon" in out:
+                return "amd"
+        except Exception:
+            pass
+        try:
+            out = subprocess.check_output(["wmic", "path", "win32_VideoController", "get", "name"], text=True, timeout=2).lower()
+            if "nvidia" in out:
+                return "nvidia"
+            elif "intel" in out:
+                return "intel"
+            elif "amd" in out or "radeon" in out:
+                return "amd"
+        except Exception:
+            pass
+        return "integrated"
+    else:
+        try:
+            lspci = subprocess.check_output(["lspci"], text=True).lower()
+            if "nvidia" in lspci:
+                return "nvidia"
+            elif "intel" in lspci:
+                return "intel"
+            elif "amd" in lspci or "radeon" in lspci:
+                return "amd"
+        except Exception:
+            pass
+        return "integrated"
+
+
 def run_doctor():
     """Production system and hardware diagnostic utility."""
-    import shutil
     print("==================================================")
     print(f"🩺 PhantomMirror System & Hardware Diagnostics (v{VERSION})")
     print("==================================================")
 
-    # 1. ADB
-    adb_path = shutil.which("adb")
-    if adb_path:
+    adb_bin = get_adb_binary()
+    adb_found = shutil.which(adb_bin) or (os.path.isfile(adb_bin) if os.path.isabs(adb_bin) else None)
+    if adb_found:
         try:
-            ver = subprocess.check_output(["adb", "version"], text=True).splitlines()[0]
-            print(f"[✓] ADB Found           : {adb_path} ({ver})")
+            ver = subprocess.check_output([adb_bin, "version"], text=True).splitlines()[0]
+            print(f"[✓] ADB Found           : {adb_found} ({ver})")
         except Exception:
-            print(f"[✓] ADB Found           : {adb_path}")
+            print(f"[✓] ADB Found           : {adb_found}")
     else:
-        print("[-] ADB Missing         : Not found in PATH (Install via: sudo apt install adb)")
+        hint = "winget install Google.PlatformTools" if sys.platform == "win32" else "sudo apt install adb"
+        print(f"[-] ADB Missing         : Not found in PATH (Install via: {hint})")
 
-    # 2. Scrcpy
-    scrcpy_path = shutil.which("scrcpy") or ("/snap/bin/scrcpy" if os.path.exists("/snap/bin/scrcpy") else None)
-    if scrcpy_path:
+    scrcpy_bin = get_scrcpy_binary()
+    scrcpy_found = shutil.which(scrcpy_bin) or (os.path.isfile(scrcpy_bin) if os.path.isabs(scrcpy_bin) else None)
+    if scrcpy_found:
         try:
-            ver = subprocess.check_output([scrcpy_path, "--version"], text=True).splitlines()[0]
-            print(f"[✓] Scrcpy Engine       : {scrcpy_path} ({ver})")
+            ver = subprocess.check_output([scrcpy_bin, "--version"], text=True).splitlines()[0]
+            print(f"[✓] Scrcpy Engine       : {scrcpy_found} ({ver})")
         except Exception:
-            print(f"[✓] Scrcpy Engine       : {scrcpy_path}")
+            print(f"[✓] Scrcpy Engine       : {scrcpy_found}")
     else:
-        print("[-] Scrcpy Missing      : Not found in PATH or /snap/bin/scrcpy")
+        hint = "winget install Genymobile.scrcpy" if sys.platform == "win32" else "sudo apt install scrcpy"
+        print(f"[-] Scrcpy Missing      : Not found in PATH (Install via: {hint})")
 
-    # 3. GPU Architecture & VA-API
     gpu = detect_hardware()
-    if gpu == "nvidia":
-        gpu_desc = "NVIDIA Architecture (NVDEC / VA-API Interop Supported)"
-    elif gpu == "intel":
-        gpu_desc = "Intel Iris Xe / UHD Graphics (VA-API Supported)"
-    elif gpu == "amd":
-        gpu_desc = "AMD Radeon Graphics (VA-API Supported)"
+    if sys.platform == "win32":
+        if gpu == "nvidia":
+            gpu_desc = "NVIDIA Architecture (NVDEC / D3D11VA Hardware Accelerated)"
+        elif gpu == "intel":
+            gpu_desc = "Intel Iris / Arc Graphics (D3D11VA / QuickSync)"
+        elif gpu == "amd":
+            gpu_desc = "AMD Radeon Graphics (D3D11VA / AMF Supported)"
+        else:
+            gpu_desc = "Integrated Graphics Engine (D3D11VA Accelerated)"
     else:
-        gpu_desc = "Integrated Graphics Engine"
+        if gpu == "nvidia":
+            gpu_desc = "NVIDIA Architecture (NVDEC / VA-API Interop Supported)"
+        elif gpu == "intel":
+            gpu_desc = "Intel Iris Xe / UHD Graphics (VA-API Supported)"
+        elif gpu == "amd":
+            gpu_desc = "AMD Radeon Graphics (VA-API Supported)"
+        else:
+            gpu_desc = "Integrated Graphics Engine"
     print(f"[✓] Hardware Decoding   : {gpu_desc}")
 
-    # 4. Display Server & Shape Extension
-    disp = os.environ.get("DISPLAY", ":0")
-    session = os.environ.get("XDG_SESSION_TYPE", "x11")
-    try:
-        from Xlib import display as xdisp
-        from Xlib.ext import shape
-        d = xdisp.Display()
-        has_shape = hasattr(shape, "mask")
-        d.close()
-        shape_status = "Supported" if has_shape else "Unavailable"
-    except Exception:
-        shape_status = "Unavailable"
-    print(f"[✓] Display Server      : {session.upper()} ({disp}) • XShape: {shape_status}")
+    if sys.platform == "win32":
+        import platform
+        session = f"Windows Desktop ({platform.system()} {platform.release()})"
+        shape_status = "Supported (Native Win32 DWM / SetWindowRgn)"
+        print(f"[✓] Display Server      : {session} • Window Silhouette: {shape_status}")
+    else:
+        disp = os.environ.get("DISPLAY", ":0")
+        session = os.environ.get("XDG_SESSION_TYPE", "x11")
+        try:
+            from Xlib import display as xdisp
+            from Xlib.ext import shape
+            d = xdisp.Display()
+            has_shape = hasattr(shape, "mask")
+            d.close()
+            shape_status = "Supported" if has_shape else "Unavailable"
+        except Exception:
+            shape_status = "Unavailable"
+        print(f"[✓] Display Server      : {session.upper()} ({disp}) • XShape: {shape_status}")
 
-    # 5. Connected Devices
     try:
-        out = subprocess.check_output(["adb", "devices", "-l"], text=True)
+        out = subprocess.check_output([adb_bin, "devices", "-l"], text=True)
         lines = [l.strip() for l in out.splitlines()[1:] if l.strip()]
         devs = [l.split()[0] for l in lines if len(l.split()) >= 2 and l.split()[1] == "device"]
         if devs:
@@ -84,7 +193,6 @@ def run_doctor():
     except Exception as e:
         print(f"[-] Device Query Error  : {e}")
 
-    # 6. Saved Registry Devices
     known = load_known_devices()
     if known:
         print(f"[✓] Known Saved Devices : {len(known)} remembered in persistent registry")
@@ -96,15 +204,149 @@ def run_doctor():
     print("🎉 System is 100% READY for Ultra-Low Latency Mirroring!")
     print("==================================================")
 
-def open_quick_hub():
-    """Production Desktop Control Hub for one-click launching."""
+
+def open_quick_hub_tk():
+    """Modern dark-themed Tkinter Desktop Control Hub for Windows & cross-platform use."""
+    try:
+        import tkinter as tk
+    except ImportError:
+        launch_mirror(profile="pro", wireless=True)
+        return
+
+    root = tk.Tk()
+    root.title("PhantomMirror")
+    root.geometry("400x560")
+    root.resizable(False, False)
+    root.configure(bg="#0b0e14")
+
+    root.update_idletasks()
+    screen_width = root.winfo_screenwidth()
+    screen_height = root.winfo_screenheight()
+    x = (screen_width - 400) // 2
+    y = (screen_height - 560) // 2
+    root.geometry(f"400x560+{x}+{y}")
+
+    icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "icon.ico")
+    if sys.platform == "win32" and os.path.exists(icon_path):
+        try:
+            root.iconbitmap(icon_path)
+        except Exception:
+            pass
+
+    header = tk.Frame(root, bg="#0b0e14", pady=15)
+    header.pack(fill="x")
+    title_lbl = tk.Label(header, text="⚡ PhantomMirror", font=("Segoe UI", 16, "bold"), fg="#ffffff", bg="#0b0e14")
+    title_lbl.pack()
+    sub_lbl = tk.Label(header, text=f"Ultra Low-Latency Mobile Suite • v{VERSION}", font=("Segoe UI", 9), fg="#00ff66", bg="#0b0e14")
+    sub_lbl.pack(pady=(2, 0))
+
+    sep = tk.Frame(root, bg="#1e293b", height=1)
+    sep.pack(fill="x", padx=20, pady=8)
+
+    prof_frame = tk.Frame(root, bg="#0b0e14", padx=24)
+    prof_frame.pack(fill="x", pady=6)
+    prof_title = tk.Label(prof_frame, text="Performance Profile:", font=("Segoe UI", 10, "bold"), fg="#cbd5e1", bg="#0b0e14")
+    prof_title.pack(anchor="w", pady=(0, 6))
+
+    profile_var = tk.StringVar(value="pro")
+    r_style = {
+        "bg": "#0b0e14",
+        "fg": "#e2e8f0",
+        "activebackground": "#0b0e14",
+        "activeforeground": "#00ff66",
+        "selectcolor": "#161b22",
+        "font": ("Segoe UI", 9),
+        "anchor": "w"
+    }
+    r1 = tk.Radiobutton(prof_frame, text="⚡ Pro (120 FPS • H.265 • 24 Mbps)", variable=profile_var, value="pro", **r_style)
+    r1.pack(fill="x", pady=2)
+    r2 = tk.Radiobutton(prof_frame, text="⚖️ Balanced (60 FPS • H.265 • 12 Mbps)", variable=profile_var, value="balanced", **r_style)
+    r2.pack(fill="x", pady=2)
+    r3 = tk.Radiobutton(prof_frame, text="🔋 Battery Saver (60 FPS • 720p)", variable=profile_var, value="battery", **r_style)
+    r3.pack(fill="x", pady=2)
+
+    sep2 = tk.Frame(root, bg="#1e293b", height=1)
+    sep2.pack(fill="x", padx=20, pady=10)
+
+    opt_frame = tk.Frame(root, bg="#0b0e14", padx=24)
+    opt_frame.pack(fill="x", pady=6)
+    opt_title = tk.Label(opt_frame, text="Display & Session:", font=("Segoe UI", 10, "bold"), fg="#cbd5e1", bg="#0b0e14")
+    opt_title.pack(anchor="w", pady=(0, 6))
+
+    wireless_var = tk.BooleanVar(value=True)
+    shape_var = tk.BooleanVar(value=True)
+    screen_off_var = tk.BooleanVar(value=True)
+    audio_var = tk.BooleanVar(value=True)
+
+    c_style = {
+        "bg": "#0b0e14",
+        "fg": "#e2e8f0",
+        "activebackground": "#0b0e14",
+        "activeforeground": "#00ff66",
+        "selectcolor": "#161b22",
+        "font": ("Segoe UI", 9),
+        "anchor": "w"
+    }
+    c1 = tk.Checkbutton(opt_frame, text="Wireless (Auto-Discovery)", variable=wireless_var, **c_style)
+    c1.pack(fill="x", pady=2)
+    c2 = tk.Checkbutton(opt_frame, text="Apple Display Silhouette (Curved Edges)", variable=shape_var, **c_style)
+    c2.pack(fill="x", pady=2)
+    c3 = tk.Checkbutton(opt_frame, text="Screen-Off Operation (Privacy & Battery)", variable=screen_off_var, **c_style)
+    c3.pack(fill="x", pady=2)
+    c4 = tk.Checkbutton(opt_frame, text="Audio Streaming (Low Latency)", variable=audio_var, **c_style)
+    c4.pack(fill="x", pady=2)
+
+    def on_launch():
+        prof = profile_var.get()
+        is_wireless = wireless_var.get()
+        is_shape = shape_var.get()
+        is_screen_off = screen_off_var.get()
+        is_audio = audio_var.get()
+        root.destroy()
+        launch_mirror(
+            profile=prof,
+            wireless=is_wireless,
+            screen_off=is_screen_off,
+            audio=is_audio,
+            frame=is_shape,
+        )
+
+    btn_frame = tk.Frame(root, bg="#0b0e14", padx=24, pady=20)
+    btn_frame.pack(fill="x", side="bottom")
+
+    launch_btn = tk.Button(
+        btn_frame,
+        text="⚡ Launch Mirroring",
+        font=("Segoe UI", 11, "bold"),
+        bg="#00b04f",
+        fg="#ffffff",
+        activebackground="#00d95a",
+        activeforeground="#ffffff",
+        relief="flat",
+        cursor="hand2",
+        pady=8,
+        command=on_launch
+    )
+    launch_btn.pack(fill="x")
+
+    def on_enter(e):
+        launch_btn.config(bg="#00c75a")
+    def on_leave(e):
+        launch_btn.config(bg="#00b04f")
+    launch_btn.bind("<Enter>", on_enter)
+    launch_btn.bind("<Leave>", on_leave)
+
+    root.mainloop()
+
+
+def open_quick_hub_gtk():
+    """GTK3-based Control Hub for native Linux desktop integration."""
     try:
         import gi
         gi.require_version('Gtk', '3.0')
         from gi.repository import Gtk, Gdk, GLib
     except Exception:
-        # Fallback to direct launch if GTK is unavailable
-        launch_mirror(profile="pro", wireless=True)
+        open_quick_hub_tk()
         return
 
     win = Gtk.Window(title="PhantomMirror")
@@ -112,7 +354,6 @@ def open_quick_hub():
     win.set_position(Gtk.WindowPosition.CENTER)
     win.set_resizable(False)
 
-    # Dark Glassmorphic styling
     css = b'''
     window {
         background-color: #0b0e14;
@@ -139,14 +380,12 @@ def open_quick_hub():
     box.set_margin_top(22); box.set_margin_bottom(22); box.set_margin_start(22); box.set_margin_end(22)
     win.add(box)
 
-    # Header
     title = Gtk.Label()
     title.set_markup(f'<span font="17" weight="bold">⚡ PhantomMirror</span>\n<span font="9" color="#00ff66">Ultra Low-Latency Mobile Suite • v{VERSION}</span>')
     title.set_justify(Gtk.Justification.CENTER)
     box.pack_start(title, False, False, 0)
     box.pack_start(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL), False, False, 2)
 
-    # Presets Frame
     p_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
     p_lbl = Gtk.Label(xalign=0)
     p_lbl.set_markup('<b>Performance Profile:</b>')
@@ -160,7 +399,6 @@ def open_quick_hub():
     p_box.pack_start(r_bat, False, False, 0)
     box.pack_start(p_box, False, False, 0)
 
-    # Options Frame
     opt_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
     opt_lbl = Gtk.Label(xalign=0)
     opt_lbl.set_markup('<b>Display & Session:</b>')
@@ -181,12 +419,10 @@ def open_quick_hub():
     opt_box.pack_start(chk_audio, False, False, 0)
     box.pack_start(opt_box, False, False, 0)
 
-    # Launch Button
     launch_btn = Gtk.Button(label='⚡ Launch Mirroring')
     launch_btn.get_style_context().add_class('launch-btn')
 
     def on_launch_clicked(btn):
-        # Determine chosen profile
         if r_pro.get_active():
             prof = "pro"
         elif r_bal.get_active():
@@ -202,7 +438,6 @@ def open_quick_hub():
         win.destroy()
         Gtk.main_quit()
 
-        # Launch mirroring session with chosen settings
         launch_mirror(
             profile=prof,
             wireless=is_wireless,
@@ -218,6 +453,20 @@ def open_quick_hub():
     win.show_all()
     Gtk.main()
 
+
+def open_quick_hub():
+    """Desktop Control Hub selector."""
+    if sys.platform != "win32":
+        try:
+            import gi
+            gi.require_version('Gtk', '3.0')
+            open_quick_hub_gtk()
+            return
+        except Exception:
+            pass
+    open_quick_hub_tk()
+
+
 def load_known_devices():
     """Load registry of all previously connected devices."""
     try:
@@ -227,6 +476,7 @@ def load_known_devices():
     except Exception:
         pass
     return {}
+
 
 def save_known_device(serial, model, ip):
     """Save or update device entry in the persistent multi-device registry."""
@@ -243,6 +493,7 @@ def save_known_device(serial, model, ip):
     except Exception:
         pass
 
+
 def save_last_ip(ip):
     try:
         clean_ip = ip.split(":")[0].strip()
@@ -250,6 +501,7 @@ def save_last_ip(ip):
             f.write(clean_ip)
     except Exception:
         pass
+
 
 def load_last_ip():
     try:
@@ -262,18 +514,41 @@ def load_last_ip():
         pass
     return None
 
+
 def get_default_gateway():
-    """Find the Wi-Fi / Hotspot gateway IP address automatically."""
-    try:
-        out = subprocess.check_output(["ip", "route"], text=True)
-        for line in out.splitlines():
-            if line.startswith("default via"):
+    """Find the Wi-Fi / Hotspot gateway IP address automatically across OSes."""
+    if sys.platform == "win32":
+        try:
+            out = subprocess.check_output(
+                ["powershell", "-NoProfile", "-Command",
+                 "(Get-NetRoute -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue | Select-Object -First 1).NextHop"],
+                text=True, timeout=2, stderr=subprocess.DEVNULL
+            ).strip()
+            if out and out.count(".") == 3 and not out.startswith("0."):
+                return out
+        except Exception:
+            pass
+        try:
+            out = subprocess.check_output(["route", "print", "0.0.0.0"], text=True, timeout=2)
+            for line in out.splitlines():
                 parts = line.split()
-                if len(parts) >= 3:
+                if len(parts) >= 4 and parts[0] == "0.0.0.0" and parts[2].count(".") == 3:
                     return parts[2]
-    except Exception:
-        pass
-    return "192.168.43.1"
+        except Exception:
+            pass
+        return "192.168.43.1"
+    else:
+        try:
+            out = subprocess.check_output(["ip", "route"], text=True)
+            for line in out.splitlines():
+                if line.startswith("default via"):
+                    parts = line.split()
+                    if len(parts) >= 3:
+                        return parts[2]
+        except Exception:
+            pass
+        return "192.168.43.1"
+
 
 def probe_adb_port(ip, port=5555, timeout=0.25):
     """Quickly check if port is open before invoking heavy ADB handshake."""
@@ -289,32 +564,46 @@ def probe_adb_port(ip, port=5555, timeout=0.25):
     except Exception:
         return None
 
+
 def get_arp_ips():
-    """Scan active IP neighbors from Linux kernel ARP cache."""
+    """Scan active IP neighbors from OS ARP cache."""
     ips = set()
-    try:
-        out = subprocess.check_output(["ip", "neigh"], text=True, timeout=1)
-        for line in out.splitlines():
-            parts = line.split()
-            if len(parts) >= 1 and parts[0].count(".") == 3:
-                ips.add(parts[0])
-    except Exception:
-        pass
-    try:
-        with open("/proc/net/arp", "r") as f:
-            for line in f.readlines()[1:]:
+    if sys.platform == "win32":
+        try:
+            out = subprocess.check_output(["arp", "-a"], text=True, timeout=2)
+            for match in re.finditer(r"(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})", out):
+                ip = match.group(1)
+                if not ip.startswith(("127.", "224.", "239.", "255.", "0.")) and not ip.endswith(".255"):
+                    ips.add(ip)
+        except Exception:
+            pass
+        return list(ips)
+    else:
+        try:
+            out = subprocess.check_output(["ip", "neigh"], text=True, timeout=1)
+            for line in out.splitlines():
                 parts = line.split()
                 if len(parts) >= 1 and parts[0].count(".") == 3:
                     ips.add(parts[0])
-    except Exception:
-        pass
-    return list(ips)
+        except Exception:
+            pass
+        try:
+            with open("/proc/net/arp", "r") as f:
+                for line in f.readlines()[1:]:
+                    parts = line.split()
+                    if len(parts) >= 1 and parts[0].count(".") == 3:
+                        ips.add(parts[0])
+        except Exception:
+            pass
+        return list(ips)
+
 
 def get_mdns_targets():
     """Discover devices advertising Wireless Debugging via Android mDNS."""
     targets = []
     try:
-        out = subprocess.check_output(["adb", "mdns", "services"], text=True, timeout=2)
+        adb_bin = get_adb_binary()
+        out = subprocess.check_output([adb_bin, "mdns", "services"], text=True, timeout=2)
         for line in out.splitlines():
             m = re.search(r"(\d+\.\d+\.\d+\.\d+):(\d+)", line)
             if m:
@@ -322,6 +611,7 @@ def get_mdns_targets():
     except Exception:
         pass
     return targets
+
 
 def get_local_subnet_ips():
     """Generate all IPs on local /24 subnet for parallel sweep."""
@@ -335,6 +625,7 @@ def get_local_subnet_ips():
     except Exception:
         return []
 
+
 def auto_discover_wireless_phones():
     """
     Multi-stage automatic wireless phone discovery:
@@ -344,7 +635,6 @@ def auto_discover_wireless_phones():
     """
     found_targets = []
 
-    # Priority 1: High-probability candidates (known IPs + ARP cache + Gateway + Hotspot)
     known = load_known_devices()
     known_ips = [dev["ip"] for dev in known.values() if isinstance(dev, dict) and dev.get("ip")]
     last_ip = load_last_ip()
@@ -359,7 +649,6 @@ def auto_discover_wireless_phones():
         results = [res for res in ex.map(lambda ip: probe_adb_port(ip), candidates) if res]
     found_targets.extend(results)
 
-    # Priority 2: Android mDNS ZeroConf
     if not found_targets:
         mdns_targets = get_mdns_targets()
         for ip, port in mdns_targets:
@@ -367,7 +656,6 @@ def auto_discover_wireless_phones():
             if res and res not in found_targets:
                 found_targets.append(res)
 
-    # Priority 3: Local subnet parallel sweep (covers any new phone connected to Wi-Fi)
     if not found_targets:
         print("[*] Probing local network for wireless Android phones...")
         subnet_ips = get_local_subnet_ips()
@@ -378,6 +666,7 @@ def auto_discover_wireless_phones():
 
     return found_targets
 
+
 def try_connect_ip(ip, port=5555):
     """Attempt connecting to a specific IP on port 5555."""
     clean_ip = ip.split(":")[0].strip()
@@ -386,7 +675,8 @@ def try_connect_ip(ip, port=5555):
     target = f"{clean_ip}:{port}"
     print(f"[*] Trying wireless connection to {target}...")
     try:
-        out = subprocess.check_output(["adb", "connect", target], text=True, timeout=5)
+        adb_bin = get_adb_binary()
+        out = subprocess.check_output([adb_bin, "connect", target], text=True, timeout=5)
         if "connected to" in out.lower() or "already connected" in out.lower():
             print(f"[+] Successfully connected to {target}")
             save_last_ip(clean_ip)
@@ -395,9 +685,11 @@ def try_connect_ip(ip, port=5555):
         pass
     return False
 
+
 def get_connected_devices(wait_for_auth=True):
     try:
-        out = subprocess.check_output(["adb", "devices", "-l"], text=True)
+        adb_bin = get_adb_binary()
+        out = subprocess.check_output([adb_bin, "devices", "-l"], text=True)
         lines = [line.strip() for line in out.strip().split("\n")[1:] if line.strip()]
         devices = []
         unauthorized = []
@@ -419,11 +711,9 @@ def get_connected_devices(wait_for_auth=True):
                 elif state == "offline":
                     offline.append((serial, model))
 
-        # Automatically reconnect offline sockets
         if offline:
-            subprocess.run(["adb", "reconnect"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.run([adb_bin, "reconnect"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
-        # Handle unauthorized new phones with clear guidance
         if unauthorized and not devices and wait_for_auth:
             print("\n" + "="*50)
             print("⚠️  AUTHORIZATION REQUIRED ON YOUR PHONE SCREEN")
@@ -448,22 +738,10 @@ def get_connected_devices(wait_for_auth=True):
         print(f"[-] ADB query error: {e}")
         return []
 
-def detect_hardware():
-    """Detect GPU vendor (NVIDIA / Intel / AMD) to select optimal decoder."""
-    try:
-        lspci = subprocess.check_output(["lspci"], text=True).lower()
-        if "nvidia" in lspci:
-            return "nvidia"
-        elif "intel" in lspci:
-            return "intel"
-        elif "amd" in lspci or "radeon" in lspci:
-            return "amd"
-    except Exception:
-        pass
-    return "integrated"
 
 def get_phone_ip(serial=None):
-    cmd = ["adb"]
+    adb_bin = get_adb_binary()
+    cmd = [adb_bin]
     if serial:
         cmd.extend(["-s", serial])
     cmd.extend(["shell", "ip route | awk '{print $9}' | head -n 1"])
@@ -473,16 +751,29 @@ def get_phone_ip(serial=None):
             return ip
     except Exception:
         pass
+    try:
+        cmd_alt = [adb_bin]
+        if serial:
+            cmd_alt.extend(["-s", serial])
+        cmd_alt.extend(["shell", "ip -f inet addr show wlan0"])
+        out = subprocess.check_output(cmd_alt, text=True)
+        m = re.search(r"inet\s+(\d+\.\d+\.\d+\.\d+)", out)
+        if m:
+            return m.group(1)
+    except Exception:
+        pass
     return get_default_gateway()
 
+
 def launch_mirror(profile="pro", wireless=False, custom_ip=None, screen_off=False, virtual_display=False, app=None, audio=True, frame=True, pure_shape=False, scale=None):
-    # 1. If user supplied an explicit IP, connect to it directly
+    adb_bin = get_adb_binary()
+    scrcpy_bin = get_scrcpy_binary()
+
     if custom_ip:
         try_connect_ip(custom_ip)
 
     devices = get_connected_devices()
 
-    # 2. If no devices connected, perform multi-stage zero-config wireless discovery
     if not devices:
         print("[*] Scanning network for wireless phones (Zero-Config Discovery)...")
         discovered_targets = auto_discover_wireless_phones()
@@ -492,11 +783,10 @@ def launch_mirror(profile="pro", wireless=False, custom_ip=None, screen_off=Fals
 
         devices = get_connected_devices()
 
-    # 3. If still no device, prompt the user for IP or USB fallback
     if not devices:
         print("\n[-] Could not auto-detect your phone's wireless IP.")
         print("[*] To connect wirelessly:")
-        print("    1. Plug in USB once and run: ./phantom --wireless (to auto-configure)")
+        print("    1. Plug in USB once and run: phantom --wireless (to auto-configure)")
         print("    2. Or enter your phone's Wi-Fi IP address directly below.")
         print("       (Find it on your phone in Settings -> Wi-Fi -> IP Address)")
         try:
@@ -512,7 +802,6 @@ def launch_mirror(profile="pro", wireless=False, custom_ip=None, screen_off=Fals
         print("\n[-] No device connected. Please plug in USB or connect to Wi-Fi/Hotspot.")
         sys.exit(1)
 
-    # If multiple devices connected, offer interactive pick or auto-select default
     if len(devices) == 1:
         target_device = devices[0]
     else:
@@ -527,7 +816,6 @@ def launch_mirror(profile="pro", wireless=False, custom_ip=None, screen_off=Fals
         except (KeyboardInterrupt, EOFError):
             target_device = devices[0]
 
-    # If wireless mode requested but connected via USB, enable TCP/IP and switch
     if wireless:
         wireless_devs = [d for d in devices if ":" in d[0]]
         if wireless_devs:
@@ -535,7 +823,7 @@ def launch_mirror(profile="pro", wireless=False, custom_ip=None, screen_off=Fals
         else:
             usb_serial = devices[0][0]
             print(f"[*] Enabling Wi-Fi mode on {usb_serial}...")
-            subprocess.call(["adb", "-s", usb_serial, "tcpip", "5555"])
+            subprocess.call([adb_bin, "-s", usb_serial, "tcpip", "5555"])
             time.sleep(1)
             phone_ip = get_phone_ip(usb_serial) or get_default_gateway()
             if try_connect_ip(phone_ip):
@@ -546,7 +834,6 @@ def launch_mirror(profile="pro", wireless=False, custom_ip=None, screen_off=Fals
     serial, model = target_device
     gpu = detect_hardware()
 
-    # Save working device to persistent registry
     if ":" in serial:
         ip = serial.split(":")[0]
         save_last_ip(ip)
@@ -560,22 +847,19 @@ def launch_mirror(profile="pro", wireless=False, custom_ip=None, screen_off=Fals
     print(f"[+] Detected Host  : {gpu.upper()} Graphics Architecture")
     print(f"[+] Active Profile : {profile.upper()}")
 
-    # Wake up device if currently asleep/dozing and dismiss keyguard
     try:
-        subprocess.run(["adb", "-s", serial, "shell", "svc power stayon true"], timeout=1, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        subprocess.run(["adb", "-s", serial, "shell", "input keyevent KEYCODE_WAKEUP"], timeout=1, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        subprocess.run(["adb", "-s", serial, "shell", "wm dismiss-keyguard"], timeout=1, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run([adb_bin, "-s", serial, "shell", "svc power stayon true"], timeout=1, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run([adb_bin, "-s", serial, "shell", "input keyevent KEYCODE_WAKEUP"], timeout=1, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run([adb_bin, "-s", serial, "shell", "wm dismiss-keyguard"], timeout=1, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except Exception:
         pass
 
-    # Base high-performance arguments
     args = [
-        "/snap/bin/scrcpy",
+        scrcpy_bin,
         "-s", serial,
         "--stay-awake",
     ]
 
-    # Virtual Session mode (Apple iPhone Mirroring-style independent secondary display on Android 14+)
     if virtual_display:
         args.extend([
             "--new-display=1080x2354/420",
@@ -592,9 +876,7 @@ def launch_mirror(profile="pro", wireless=False, custom_ip=None, screen_off=Fals
         print("[+] Virtual Session Mode: ACTIVE (Independent screen that stays active when phone is locked/closed)")
         print("[*] Window is dynamically resizable (-x flex display enabled)")
 
-    # Hardware & Performance Profiles
     if profile == "pro":
-        # Apple-grade 120 FPS / H.265 / 24 Mbps (Ideal for RTX 3050 & high-end screens)
         args.extend([
             "--video-codec=h265",
             "--video-bit-rate=24M",
@@ -603,7 +885,6 @@ def launch_mirror(profile="pro", wireless=False, custom_ip=None, screen_off=Fals
         print("[*] Preset: 120 FPS • H.265 (HEVC) • 24 Mbps [Pro]")
 
     elif profile == "battery":
-        # Ultra-lightweight 720p / H.264 / 6 Mbps (Ideal for battery conservation & legacy iGPUs)
         args.extend([
             "--video-codec=h264",
             "--video-bit-rate=6M",
@@ -613,7 +894,6 @@ def launch_mirror(profile="pro", wireless=False, custom_ip=None, screen_off=Fals
         print("[*] Preset: 60 FPS • H.264 • 6 Mbps [Battery / Low-Spec]")
 
     else:
-        # Balanced default: 60 FPS / H.265 / 12 Mbps (Ideal for Intel Iris Xe / AMD Radeon iGPUs)
         args.extend([
             "--video-codec=h265",
             "--video-bit-rate=12M",
@@ -621,7 +901,6 @@ def launch_mirror(profile="pro", wireless=False, custom_ip=None, screen_off=Fals
         ])
         print("[*] Preset: 60 FPS • H.265 (HEVC) • 12 Mbps [Balanced iGPU]")
 
-    # Audio forwarding
     if audio:
         args.extend([
             "--audio-codec=opus",
@@ -630,7 +909,6 @@ def launch_mirror(profile="pro", wireless=False, custom_ip=None, screen_off=Fals
     else:
         args.append("--no-audio")
 
-    # Screen off mode: Enabled by default to keep physical screen dark like Apple Mirroring
     if screen_off and not virtual_display:
         args.append("--turn-screen-off")
         print("[+] Screen-Off Mode: Physical phone display is powered OFF to save battery")
@@ -638,10 +916,9 @@ def launch_mirror(profile="pro", wireless=False, custom_ip=None, screen_off=Fals
         print("             (If phone locks/dozes, Right-Click in the window or press Alt+P to wake it instantly)")
 
     env = os.environ.copy()
-    if "DISPLAY" not in env:
+    if sys.platform != "win32" and "DISPLAY" not in env:
         env["DISPLAY"] = ":0"
 
-    # Apple-style Device Display Frame & Shape Engine
     if frame or pure_shape:
         try:
             from phantom_frame import get_device_display_profile, launch_with_apple_frame, launch_pure_shape
@@ -660,19 +937,17 @@ def launch_mirror(profile="pro", wireless=False, custom_ip=None, screen_off=Fals
     except KeyboardInterrupt:
         print("\n[*] PhantomMirror closed.")
 
+
 def main():
-    # 1. Quick diagnostics command
     if len(sys.argv) > 1 and sys.argv[1] in ("doctor", "--doctor"):
         run_doctor()
         return
 
-    # 2. Version check
     if len(sys.argv) > 1 and sys.argv[1] in ("-v", "--version"):
-        print(f"⚡ PhantomMirror v{VERSION} (Production Suite)")
+        print(f"⚡ PhantomMirror v{VERSION} (Cross-Platform Production Suite)")
         return
 
-    # 3. Open GUI Hub if explicitly requested or launched from desktop application launcher (non-TTY)
-    if "--gui" in sys.argv or (len(sys.argv) == 1 and os.environ.get("DISPLAY") and not sys.stdin.isatty()):
+    if "--gui" in sys.argv or (len(sys.argv) == 1 and not sys.stdin.isatty()):
         open_quick_hub()
         return
 
@@ -767,6 +1042,7 @@ def main():
         pure_shape=args.pure_shape,
         scale=args.scale,
     )
+
 
 if __name__ == "__main__":
     main()

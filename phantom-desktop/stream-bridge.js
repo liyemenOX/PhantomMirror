@@ -1,9 +1,10 @@
 import { WebSocketServer } from 'ws';
-import { exec, spawn } from 'child_process';
+import { exec } from 'child_process';
 import { promisify } from 'util';
 
 const execAsync = promisify(exec);
 const WS_PORT = 49153;
+const ADB = process.env.ADB_PATH || 'adb';
 
 const wss = new WebSocketServer({ port: WS_PORT });
 console.log(`[+] PhantomMirror Stream Bridge active on ws://localhost:${WS_PORT}`);
@@ -15,8 +16,8 @@ let isStreaming = false;
 // Query connected ADB devices
 async function getConnectedDevices() {
   try {
-    const { stdout } = await execAsync('adb devices -l');
-    const lines = stdout.trim().split('\n').slice(1);
+    const { stdout } = await execAsync(`"${ADB}" devices -l`);
+    const lines = stdout.trim().split(/\r?\n/).slice(1);
     const devices = [];
 
     for (const line of lines) {
@@ -25,8 +26,8 @@ async function getConnectedDevices() {
         const serial = parts[0];
         let model = 'Android Device';
         try {
-          const { stdout: modelOut } = await execAsync(`adb -s ${serial} shell "getprop ro.product.brand; getprop ro.product.model"`);
-          const [brand, mod] = modelOut.trim().split('\n');
+          const { stdout: modelOut } = await execAsync(`"${ADB}" -s ${serial} shell "getprop ro.product.brand; getprop ro.product.model"`);
+          const [brand, mod] = modelOut.trim().split(/\r?\n/);
           model = `${brand || ''} ${mod || ''}`.trim() || model;
         } catch (_) {}
 
@@ -68,17 +69,17 @@ wss.on('connection', async (ws) => {
         const { x, y } = msg;
         const screenX = Math.round((x / 65535) * 1272);
         const screenY = Math.round((y / 65535) * 2772);
-        exec(`adb shell input tap ${screenX} ${screenY}`);
+        exec(`"${ADB}" shell input tap ${screenX} ${screenY}`);
       } else if (msg.type === 'swipe') {
         const { x1, y1, x2, y2, duration = 200 } = msg;
         const sx1 = Math.round((x1 / 65535) * 1272);
         const sy1 = Math.round((y1 / 65535) * 2772);
         const sx2 = Math.round((x2 / 65535) * 1272);
         const sy2 = Math.round((y2 / 65535) * 2772);
-        exec(`adb shell input swipe ${sx1} ${sy1} ${sx2} ${sy2} ${duration}`);
+        exec(`"${ADB}" shell input swipe ${sx1} ${sy1} ${sx2} ${sy2} ${duration}`);
       } else if (msg.type === 'key') {
         // 4 = Back, 3 = Home, 187 = AppSwitch
-        exec(`adb shell input keyevent ${msg.keycode}`);
+        exec(`"${ADB}" shell input keyevent ${msg.keycode}`);
       }
     } catch (_) {}
   });
@@ -94,7 +95,7 @@ async function startScreenCapture(ws, isActive) {
   while (isActive() && ws.readyState === 1) {
     try {
       // Capture frame directly from device display pipeline
-      const { stdout } = await execAsync('adb exec-out screencap -p', {
+      const { stdout } = await execAsync(`"${ADB}" exec-out screencap -p`, {
         encoding: 'buffer',
         maxBuffer: 10 * 1024 * 1024
       });

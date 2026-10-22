@@ -3,6 +3,7 @@
 PhantomMirror - Apple Device Display Silhouette & Shape Engine
 Automatically adapts the mirroring viewport to the exact physical display shape,
 corner radius, aspect ratio, and camera cutout of the connected device.
+Supports both Linux (X11 XShape) and Windows (Native Win32 DWM / SetWindowRgn).
 """
 
 import sys
@@ -10,11 +11,46 @@ import os
 import re
 import math
 import time
+import shutil
 import subprocess
 import threading
 
-from Xlib import X, display as xdisplay
-from Xlib.ext import shape
+# Conditional imports for display server backends
+if sys.platform == "win32":
+    import ctypes
+    from ctypes import wintypes
+    X = None
+    xdisplay = None
+    shape = None
+else:
+    try:
+        from Xlib import X, display as xdisplay
+        from Xlib.ext import shape
+    except ImportError:
+        X = None
+        xdisplay = None
+        shape = None
+
+
+def get_adb_binary():
+    """Locate adb binary across Windows and Linux."""
+    if "ADB_PATH" in os.environ and os.path.isfile(os.environ["ADB_PATH"]):
+        return os.environ["ADB_PATH"]
+    found = shutil.which("adb")
+    if found:
+        return found
+    if sys.platform == "win32":
+        candidates = [
+            os.path.expandvars(r"%LOCALAPPDATA%\Android\Sdk\platform-tools\adb.exe"),
+            os.path.expandvars(r"%USERPROFILE%\scoop\shims\adb.exe"),
+            r"C:\ProgramData\chocolatey\bin\adb.exe",
+            r"C:\scrcpy\adb.exe",
+            os.path.expandvars(r"%ProgramFiles%\Android\platform-tools\adb.exe"),
+        ]
+        for c in candidates:
+            if os.path.isfile(c):
+                return c
+    return "adb"
 
 
 def get_device_display_profile(serial=None):
@@ -31,7 +67,8 @@ def get_device_display_profile(serial=None):
         'cutout': {'type': 'punch_hole', 'rel_center_x': 0.5, 'rel_top': 0.008, 'rel_w': 0.06, 'rel_h': 0.03},
     }
 
-    adb_cmd = ['adb']
+    adb_bin = get_adb_binary()
+    adb_cmd = [adb_bin]
     if serial:
         adb_cmd.extend(['-s', serial])
 
@@ -113,7 +150,7 @@ def get_device_display_profile(serial=None):
 def get_xshape_rounded_rectangles(w, h, r):
     """
     Compute 1-pixel scanline rectangle slices for X11 SHAPE extension
-    to produce smooth hardware-clipped rounded display corners.
+    to produce smooth hardware-clipped rounded display corners on Linux.
     """
     r = max(1, min(int(r), min(w, h) // 2))
     rects = [(0, r, w, max(1, h - 2 * r))]
@@ -127,16 +164,15 @@ def get_xshape_rounded_rectangles(w, h, r):
     return rects
 
 
-def launch_with_apple_frame(profile_data, scrcpy_cmd, scale_h=None):
+def launch_with_apple_frame_linux(profile_data, scrcpy_cmd, scale_h=None):
     """
-    Launches scrcpy natively and applies the Apple physical display shape,
-    exact corner radius, and hardware camera cutout dynamically.
-    Guarantees 100% native video rendering without black screens or cut widgets.
+    Linux X11 viewport shaping and camera cutout implementation via XShape.
     """
+    if xdisplay is None or shape is None:
+        raise RuntimeError("python3-xlib is not available on this Linux installation")
+
     token = f"PhantomMirror_{int(time.time() * 1000)}"
     cmd = list(scrcpy_cmd)
-
-    # Launch scrcpy borderless natively without forcing artificial aspect ratios
     cmd.extend([
         f"--window-title={token}",
         "--window-borderless",
@@ -151,7 +187,7 @@ def launch_with_apple_frame(profile_data, scrcpy_cmd, scale_h=None):
     cutout_type = cutout.get('type', 'punch_hole')
 
     print("==================================================")
-    print(" Apple Device Display Silhouette: ACTIVE")
+    print(" Apple Device Display Silhouette: ACTIVE (Linux X11)")
     print("==================================================")
     print(f"[+] Device Canvas    : {dev_name}")
     print(f"[+] Physical Radius  : {r_norm * 100:.1f}% display curvature")
@@ -166,7 +202,6 @@ def launch_with_apple_frame(profile_data, scrcpy_cmd, scale_h=None):
 
     proc = subprocess.Popen(cmd, env=env)
 
-    # Background shape orchestrator
     def shape_worker():
         xdpy = xdisplay.Display()
         root = xdpy.screen().root
@@ -194,11 +229,8 @@ def launch_with_apple_frame(profile_data, scrcpy_cmd, scale_h=None):
         if not scrcpy_win:
             return
 
-        # Listen for window geometry changes (rotations between portrait & landscape, resizing)
         scrcpy_win.change_attributes(event_mask=X.StructureNotifyMask)
         xdpy.sync()
-
-        # Give scrcpy video decoder a moment to decode first frame and size the window
         time.sleep(1.0)
 
         cam_win = None
@@ -213,7 +245,6 @@ def launch_with_apple_frame(profile_data, scrcpy_cmd, scale_h=None):
                     return
                 last_dims = (w, h)
 
-                # Corner radius based on shorter dimension (works in both portrait and landscape)
                 short_edge = min(w, h)
                 curv_r = max(10, int(round(short_edge * r_norm)))
 
@@ -233,7 +264,6 @@ def launch_with_apple_frame(profile_data, scrcpy_cmd, scale_h=None):
                         px = int(round(w * cutout.get('rel_center_x', 0.5))) - (pw // 2)
                         py = max(8, int(round(h * cutout.get('rel_top', 0.008))))
                     else:
-                        # In landscape orientation, camera sits along the side edge
                         pw = max(16, int(round(h * cutout.get('rel_w', 0.06))))
                         ph = pw
                         px = max(8, int(round(w * cutout.get('rel_top', 0.008))))
@@ -247,7 +277,6 @@ def launch_with_apple_frame(profile_data, scrcpy_cmd, scale_h=None):
                             X.CopyFromParent,
                             background_pixel=0
                         )
-                        # Set click-through input shape mask so touches and notification pull-downs work!
                         shape.rectangles(cam_win, shape.SO.Set, shape.SK.Input, X.Unsorted, 0, 0, [])
                         cam_win.map()
                     else:
@@ -262,13 +291,10 @@ def launch_with_apple_frame(profile_data, scrcpy_cmd, scale_h=None):
             except Exception:
                 pass
 
-        # Initial shape
         update_shape()
 
-        # Event loop to track resizes, rotation, and termination
         while proc.poll() is None:
             try:
-                # Check if X events pending
                 while xdpy.pending_events():
                     ev = xdpy.next_event()
                     if ev.type == X.ConfigureNotify:
@@ -285,6 +311,251 @@ def launch_with_apple_frame(profile_data, scrcpy_cmd, scale_h=None):
     except KeyboardInterrupt:
         if proc.poll() is None:
             proc.terminate()
+
+
+def launch_with_apple_frame_windows(profile_data, scrcpy_cmd, scale_h=None):
+    """
+    Windows Native viewport shaping & camera punch-hole cutout implementation via Win32 API.
+    Zero external pip dependencies (uses built-in ctypes).
+    """
+    import ctypes
+    from ctypes import wintypes
+
+    user32 = ctypes.windll.user32
+    gdi32 = ctypes.windll.gdi32
+    dwmapi = getattr(ctypes.windll, "dwmapi", None)
+
+    class RECT(ctypes.Structure):
+        _fields_ = [
+            ("left", wintypes.LONG),
+            ("top", wintypes.LONG),
+            ("right", wintypes.LONG),
+            ("bottom", wintypes.LONG),
+        ]
+
+    class PAINTSTRUCT(ctypes.Structure):
+        _fields_ = [
+            ("hdc", wintypes.HDC),
+            ("fErase", wintypes.BOOL),
+            ("rcPaint", RECT),
+            ("fRestore", wintypes.BOOL),
+            ("fIncUpdate", wintypes.BOOL),
+            ("rgbReserved", wintypes.BYTE * 32),
+        ]
+
+    class WNDCLASSEXW(ctypes.Structure):
+        _fields_ = [
+            ("cbSize", wintypes.UINT),
+            ("style", wintypes.UINT),
+            ("lpfnWndProc", ctypes.c_void_p),
+            ("cbClsExtra", ctypes.c_int),
+            ("cbWndExtra", ctypes.c_int),
+            ("hInstance", wintypes.HINSTANCE),
+            ("hIcon", wintypes.HICON),
+            ("hCursor", wintypes.HCURSOR),
+            ("hbrBackground", wintypes.HBRUSH),
+            ("lpszMenuName", wintypes.LPCWSTR),
+            ("lpszClassName", wintypes.LPCWSTR),
+            ("hIconSm", wintypes.HICON),
+        ]
+
+    token = f"PhantomMirror_{int(time.time() * 1000)}"
+    cmd = list(scrcpy_cmd)
+    cmd.extend([
+        f"--window-title={token}",
+        "--window-borderless",
+    ])
+
+    if scale_h:
+        cmd.append(f"--max-size={int(scale_h)}")
+
+    r_norm = profile_data.get('normalized_radius', 0.125)
+    dev_name = profile_data.get('name', 'Android Device')
+    cutout = profile_data.get('cutout', {})
+    cutout_type = cutout.get('type', 'punch_hole')
+
+    print("==================================================")
+    print(" Apple Device Display Silhouette: ACTIVE (Windows Win32)")
+    print("==================================================")
+    print(f"[+] Device Canvas    : {dev_name}")
+    print(f"[+] Physical Radius  : {r_norm * 100:.1f}% display curvature")
+    print(f"[+] Hardware Cutout  : {cutout_type.upper()}")
+    print("[*] Shortcuts: Alt+P (Power) • Alt+H (Home) • Alt+B / Right-Click (Back)")
+    print("==================================================")
+
+    proc = subprocess.Popen(cmd)
+
+    def shape_worker_win32():
+        # Wait for scrcpy window to appear
+        t0 = time.time()
+        scrcpy_hwnd = None
+        while time.time() - t0 < 12:
+            if proc.poll() is not None:
+                return
+            hwnd = user32.FindWindowW(None, token)
+            if hwnd and user32.IsWindowVisible(hwnd):
+                scrcpy_hwnd = hwnd
+                break
+            time.sleep(0.1)
+
+        if not scrcpy_hwnd:
+            return
+
+        # Give scrcpy video decoder a brief moment to size the window
+        time.sleep(0.8)
+
+        # Register overlay window class for transparent click-through camera cutout
+        overlay_class = f"PhantomCutout_{int(time.time() * 1000)}"
+        WNDPROC = ctypes.WINFUNCTYPE(ctypes.c_ssize_t, wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM)
+
+        def overlay_proc(hwnd, msg, wparam, lparam):
+            if msg == 0x000F:  # WM_PAINT
+                ps = PAINTSTRUCT()
+                hdc = user32.BeginPaint(hwnd, ctypes.byref(ps))
+                black_brush = gdi32.GetStockObject(4)  # BLACK_BRUSH
+                user32.FillRect(hdc, ctypes.byref(ps.rcPaint), black_brush)
+                user32.EndPaint(hwnd, ctypes.byref(ps))
+                return 0
+            elif msg == 0x0084:  # WM_NCHITTEST -> HTTRANSPARENT (-1) for true click-through
+                return -1
+            return user32.DefWindowProcW(hwnd, msg, wparam, lparam)
+
+        wndproc_cb = WNDPROC(overlay_proc)
+        wc = WNDCLASSEXW()
+        wc.cbSize = ctypes.sizeof(WNDCLASSEXW)
+        wc.style = 0x0002 | 0x0001  # CS_HREDRAW | CS_VREDRAW
+        wc.lpfnWndProc = ctypes.cast(wndproc_cb, ctypes.c_void_p)
+        wc.hInstance = user32.GetWindowLongW(scrcpy_hwnd, -6)  # GWL_HINSTANCE
+        wc.hbrBackground = gdi32.GetStockObject(4)  # BLACK_BRUSH
+        wc.lpszClassName = overlay_class
+
+        user32.RegisterClassExW(ctypes.byref(wc))
+
+        # Create overlay window: WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE
+        WS_EX_TOPMOST = 0x00000008
+        WS_EX_TRANSPARENT = 0x00000020
+        WS_EX_TOOLWINDOW = 0x00000080
+        WS_EX_LAYERED = 0x00080000
+        WS_EX_NOACTIVATE = 0x08000000
+        WS_POPUP = 0x80000000
+        WS_VISIBLE = 0x10000000
+
+        cam_hwnd = user32.CreateWindowExW(
+            WS_EX_TOPMOST | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW | WS_EX_LAYERED | WS_EX_NOACTIVATE,
+            overlay_class,
+            "PhantomCutout",
+            WS_POPUP | WS_VISIBLE,
+            0, 0, 10, 10,
+            0, 0, wc.hInstance, 0
+        )
+
+        last_rect = (0, 0, 0, 0)
+
+        while proc.poll() is None:
+            try:
+                rect = RECT()
+                if not user32.GetWindowRect(scrcpy_hwnd, ctypes.byref(rect)):
+                    break
+
+                w = rect.right - rect.left
+                h = rect.bottom - rect.top
+                current_rect = (rect.left, rect.top, w, h)
+
+                if w > 50 and h > 50 and current_rect != last_rect:
+                    last_rect = current_rect
+                    short_edge = min(w, h)
+                    curv_r = max(10, int(round(short_edge * r_norm)))
+
+                    # 1. Apply smooth rounded corners to the scrcpy window via SetWindowRgn
+                    hrgn = gdi32.CreateRoundRectRgn(0, 0, w + 1, h + 1, curv_r * 2, curv_r * 2)
+                    user32.SetWindowRgn(scrcpy_hwnd, hrgn, True)
+
+                    # Also set Windows 11 DWM rounded corner preference if supported
+                    if dwmapi:
+                        try:
+                            DWMWA_WINDOW_CORNER_PREFERENCE = 33
+                            DWMWCP_ROUND = 2
+                            dwmapi.DwmSetWindowAttribute(
+                                scrcpy_hwnd,
+                                DWMWA_WINDOW_CORNER_PREFERENCE,
+                                ctypes.byref(ctypes.c_int(DWMWCP_ROUND)),
+                                4
+                            )
+                        except Exception:
+                            pass
+
+                    # 2. Position camera punch hole cutout overlay
+                    if cam_hwnd and cutout_type in ('punch_hole', 'dynamic_island', 'corner_punch_hole'):
+                        is_portrait = (h >= w)
+                        if is_portrait:
+                            pw = max(16, int(round(w * cutout.get('rel_w', 0.06))))
+                            ph = max(16, int(round(h * cutout.get('rel_h', 0.03))))
+                            if cutout_type == 'punch_hole':
+                                ph = pw
+                            px = int(round(w * cutout.get('rel_center_x', 0.5))) - (pw // 2)
+                            py = max(8, int(round(h * cutout.get('rel_top', 0.008))))
+                        else:
+                            pw = max(16, int(round(h * cutout.get('rel_w', 0.06))))
+                            ph = pw
+                            px = max(8, int(round(w * cutout.get('rel_top', 0.008))))
+                            py = (h - ph) // 2
+
+                        cam_r = ph // 2
+                        cam_hrgn = gdi32.CreateRoundRectRgn(0, 0, pw + 1, ph + 1, cam_r * 2, cam_r * 2)
+                        user32.SetWindowRgn(cam_hwnd, cam_hrgn, True)
+
+                        # Set overlay position directly over scrcpy window
+                        # SWP_NOACTIVATE = 0x0010, SWP_SHOWWINDOW = 0x0040
+                        user32.SetWindowPos(
+                            cam_hwnd,
+                            scrcpy_hwnd,
+                            rect.left + px,
+                            rect.top + py,
+                            pw,
+                            ph,
+                            0x0010 | 0x0040
+                        )
+
+                # Track minimize / restore state
+                if cam_hwnd:
+                    if user32.IsIconic(scrcpy_hwnd) or not user32.IsWindowVisible(scrcpy_hwnd):
+                        user32.ShowWindow(cam_hwnd, 0)  # SW_HIDE
+                    else:
+                        user32.ShowWindow(cam_hwnd, 4)  # SW_SHOWNOACTIVATE
+
+                # Message pump for overlay
+                msg = wintypes.MSG()
+                while user32.PeekMessageW(ctypes.byref(msg), 0, 0, 0, 1):
+                    user32.TranslateMessage(ctypes.byref(msg))
+                    user32.DispatchMessageW(ctypes.byref(msg))
+
+                time.sleep(0.1)
+
+            except Exception:
+                time.sleep(0.2)
+
+        if cam_hwnd:
+            user32.DestroyWindow(cam_hwnd)
+
+    shape_thread = threading.Thread(target=shape_worker_win32, daemon=True)
+    shape_thread.start()
+
+    try:
+        proc.wait()
+    except KeyboardInterrupt:
+        if proc.poll() is None:
+            proc.terminate()
+
+
+def launch_with_apple_frame(profile_data, scrcpy_cmd, scale_h=None):
+    """
+    Cross-platform dispatcher for Apple Device Display Silhouette.
+    Automatically chooses native Win32 DWM engine on Windows or X11 XShape on Linux.
+    """
+    if sys.platform == "win32":
+        launch_with_apple_frame_windows(profile_data, scrcpy_cmd, scale_h=scale_h)
+    else:
+        launch_with_apple_frame_linux(profile_data, scrcpy_cmd, scale_h=scale_h)
 
 
 def launch_pure_shape(profile_data, scrcpy_cmd, scale_h=None):
